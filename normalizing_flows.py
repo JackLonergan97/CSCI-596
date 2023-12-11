@@ -127,6 +127,7 @@ def Coupling(input_shape):
 
     return keras.Model(inputs=input, outputs=[s_layer_5, t_layer_5])
 
+# defining class which sets up the framework of the algorithm
 class RealNVP(keras.Model):
     def __init__(self, num_coupling_layers):
         super(RealNVP, self).__init__()
@@ -207,8 +208,120 @@ model = RealNVP(num_coupling_layers=12)
 
 model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001))
 
+# executing the normalizing flows algorithm on the 6D hypercube data defined earlier in the script
 history = model.fit(
     augmented_normalized_data, batch_size=256, epochs=100, verbose=2, validation_split=0.2
 )
 
+# saving the weights (the output) of the algorithm
 model.save_weights('../data/mini_emulatorModel')
+
+emulator = RealNVP(num_coupling_layers=12)
+emulator.load_weights('../data/mini_emulatorModel')
+
+# From data to latent space.
+z, _ = emulator(normalized_data)
+
+# From latent space to data.
+samples = emulator.distribution.sample(3000)
+x, _ = emulator.predict(samples)
+xt = norm_transform_inv(x, np.nanmin(x, axis = 0), np.nanmax(x, axis = 0), -1, 1)
+clip = (xt[:,0] > np.log10(2.0*massResolution/massTree)) & (xt[:,2] <= 0.0) & (xt[:,2] > -xt[:,0]+np.log10(massResolution/massTree)) & (xt[:,3] >= 0.0)
+
+# Generate a weighted subsample of the original data.
+w = weight[subhalos]
+i = np.arange(0, w.size, 1, dtype=int)
+subsample = np.random.choice(i, size=len(xt[clip]), replace=True, p=w/np.sum(w))
+
+# create a mask that eliminates the tidal heating outlier data points from Galacticus
+tidal_clip = (data[subsample, 5] > -6)
+
+# Compute and compare the ratio of low-to-high-mass subhalos in the original data and in the emulated data.
+# For the original data we weight by the subsampling weight. If this was included correctly in the training
+# then the emulated data should have effectively learned these weights and produce a ratio similar to that in
+# the original data.
+s6 = data[:,0] > -6.0
+s4 = data[:,0] > -4.0
+ratioOriginal = np.sum(data[s6,0]*w[s6])/np.sum(data[s4,0]*w[s4])
+print("Ratio of low-to-high-mass subhalos in original data (weighted): "+str(ratioOriginal))
+
+ratioEmulator = np.sum(xt[clip,0] > -6.0)/np.sum(xt[clip,0] > -4.0)
+print("Ratio of low-to-high-mass subhalos in emulated data: "+str(ratioEmulator))
+
+# Setting up code for plots
+# Testing now to create Density plots
+from scipy.stats import gaussian_kde
+
+concentration_density_galacticus = np.vstack([data[subsample, 0][tidal_clip], data[subsample, 1][tidal_clip]])
+z1_galacticus = gaussian_kde(concentration_density_galacticus)(concentration_density_galacticus)
+concentration_density_generated = np.vstack([xt[clip, 0][tidal_clip], xt[clip, 1][tidal_clip]])
+z1_generated = gaussian_kde(concentration_density_generated)(concentration_density_generated)
+
+mass_bound_density_galacticus = np.vstack([data[subsample, 0][tidal_clip], data[subsample, 2][tidal_clip]])
+z2_galacticus = gaussian_kde(mass_bound_density_galacticus)(mass_bound_density_galacticus)
+mass_bound_density_generated = np.vstack([xt[clip, 0][tidal_clip], xt[clip, 2][tidal_clip]])
+z2_generated = gaussian_kde(mass_bound_density_generated)(mass_bound_density_generated)
+
+mass_bound_density_galacticus = np.vstack([data[subsample, 0][tidal_clip], data[subsample, 2][tidal_clip]])
+z2_galacticus = gaussian_kde(mass_bound_density_galacticus)(mass_bound_density_galacticus)
+mass_bound_density_generated = np.vstack([xt[clip, 0][tidal_clip], xt[clip, 2][tidal_clip]])
+z2_generated = gaussian_kde(mass_bound_density_generated)(mass_bound_density_generated)
+
+redshift_infall_density_galacticus = np.vstack([data[subsample, 0][tidal_clip], data[subsample, 3][tidal_clip]])
+z3_galacticus = gaussian_kde(redshift_infall_density_galacticus)(redshift_infall_density_galacticus)
+redshift_infall_density_generated = np.vstack([xt[clip, 0][tidal_clip], xt[clip, 3][tidal_clip]])
+z3_generated = gaussian_kde(redshift_infall_density_generated)(redshift_infall_density_generated)
+
+orbital_radius_density_galacticus = np.vstack([data[subsample, 0][tidal_clip], data[subsample, 4][tidal_clip]])
+z4_galacticus = gaussian_kde(orbital_radius_density_galacticus)(orbital_radius_density_galacticus)
+orbital_radius_density_generated = np.vstack([xt[clip, 0][tidal_clip], xt[clip, 4][tidal_clip]])
+z4_generated = gaussian_kde(orbital_radius_density_generated)(orbital_radius_density_generated)
+
+tidal_heating_density_galacticus = np.vstack([data[subsample, 0][tidal_clip], data[subsample, 5][tidal_clip]])
+z5_galacticus = gaussian_kde(tidal_heating_density_galacticus)(tidal_heating_density_galacticus)
+tidal_heating_density_generated = np.vstack([xt[clip, 0][tidal_clip], xt[clip, 5][tidal_clip]])
+z5_generated = gaussian_kde(tidal_heating_density_generated)(tidal_heating_density_generated)
+
+f, axes = plt.subplots(5, 2)
+f.set_size_inches(15, 18)
+
+axes[0, 0].scatter(data[subsample, 0][tidal_clip], data[subsample, 1][tidal_clip], c = z1_galacticus, s=9)
+axes[0, 0].set(title="Galacticus", xlabel="Mass infall", ylabel="concentration")
+axes[0, 0].set_xlim([-6, 0])
+axes[0, 0].set_ylim([0, 23])
+axes[0, 1].scatter(xt[clip, 0][tidal_clip], xt[clip, 1][tidal_clip], c = z1_generated, s=9)
+axes[0, 1].set(title="Generated", xlabel="Mass infall", ylabel="concentration")
+axes[0, 1].set_xlim([-6, 0])
+axes[0, 1].set_ylim([0, 23])
+axes[1, 0].scatter(data[subsample, 0][tidal_clip], data[subsample, 2][tidal_clip], c = z2_galacticus, s=9)
+axes[1, 0].set(title="Galacticus", xlabel="Mass infall", ylabel="Mass bound")
+axes[1, 0].set_xlim([-6, 0])
+axes[1, 0].set_ylim([-5.0, 0.2])
+axes[1, 1].scatter(xt[clip, 0][tidal_clip], xt[clip, 2][tidal_clip], c = z2_generated, s=9)
+axes[1, 1].set(title="Generated", xlabel="Mass infall", ylabel="Mass bound")
+axes[1, 1].set_xlim([-6, 0])
+axes[1, 1].set_ylim([-5.0, 0.2])
+axes[2, 0].scatter(data[subsample, 0][tidal_clip], data[subsample, 3][tidal_clip], c = z3_galacticus, s=9)
+axes[2, 0].set(title="Galacticus", xlabel="Mass infall", ylabel="Redshift infall")
+axes[2, 0].set_xlim([-6, 0])
+axes[2, 0].set_ylim([-0.2, 6.0])
+axes[2, 1].scatter(xt[clip, 0][tidal_clip], xt[clip, 3][tidal_clip], c = z3_generated, s=9)
+axes[2, 1].set(title="Generated", xlabel="Mass infall", ylabel="Redshift infall")
+axes[2, 1].set_xlim([-6, 0])
+axes[2, 1].set_ylim([-0.2, 6.0])
+axes[3, 0].scatter(data[subsample, 0][tidal_clip], data[subsample, 4][tidal_clip], c = z4_galacticus, s=9)
+axes[3, 0].set(title="Galacticus", xlabel="Mass infall", ylabel="Orbital radius")
+axes[3, 0].set_xlim([-6, 0])
+axes[3, 0].set_ylim([-2.0, 1.0])
+axes[3, 1].scatter(xt[clip, 0][tidal_clip], xt[clip, 4][tidal_clip], c = z4_generated, s=9)
+axes[3, 1].set(title="Generated", xlabel="Mass infall", ylabel="Orbital radius")
+axes[3, 1].set_xlim([-6, 0])
+axes[3, 1].set_ylim([-2.0, 1.0])
+axes[4, 0].scatter(data[subsample, 0][tidal_clip], data[subsample, 5][tidal_clip], c = z5_galacticus, s=9)
+axes[4, 0].set(title="Galacticus", xlabel="Mass infall", ylabel="Tidal heating")
+axes[4, 0].set_xlim([-6, 0])
+axes[4, 0].set_ylim([-3.0, 5.0])
+axes[4, 1].scatter(xt[clip, 0][tidal_clip], xt[clip, 5][tidal_clip], c = z5_generated, s=9)
+axes[4, 1].set(title="Generated", xlabel="Mass infall", ylabel="Tidal heating")
+axes[4, 1].set_xlim([-6, 0])
+axes[4, 1].set_ylim([-3.0, 5.0])
